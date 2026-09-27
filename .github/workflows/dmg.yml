@@ -1,0 +1,44 @@
+name: macOS disk images
+
+# Builds binarius-ai-code-studio-<version>-macos-<arch>.dmg from the macOS zips of a release
+# and attaches them to that release. Run from the Actions tab (or: gh workflow run dmg.yml -f version=1.0.0).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag, e.g. 1.0.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x64]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ github.event.inputs.version }}
+    steps:
+      - name: Download the macOS zip
+        run: gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "binarius-ai-code-studio-$VERSION-macos-${{ matrix.arch }}.zip"
+      - name: Unpack (keeps the executable permissions stored in the zip)
+        run: |
+          mkdir app
+          ditto -x -k "binarius-ai-code-studio-$VERSION-macos-${{ matrix.arch }}.zip" app
+          chmod +x "app/Binarius AI Code Studio.app/Contents/MacOS/"*
+          find app -path "*/jre/bin/*" -type f -exec chmod +x {} +
+          find app \( -name jspawnhelper -o -name jexec \) -exec chmod +x {} +
+          # ad-hoc signature so Apple silicon runs the unsigned app after "Open"
+          codesign --force --deep --sign - "app/Binarius AI Code Studio.app"
+          ls -la "app/Binarius AI Code Studio.app/Contents/MacOS"
+      - name: Disk image
+        run: |
+          ln -s /Applications app/Applications
+          hdiutil create -volname "Binarius AI Code Studio" -srcfolder app -ov -format UDZO \
+            "binarius-ai-code-studio-$VERSION-macos-${{ matrix.arch }}.dmg"
+          shasum -a 256 *.dmg
+      - name: Attach to the release
+        run: gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber "binarius-ai-code-studio-$VERSION-macos-${{ matrix.arch }}.dmg"
